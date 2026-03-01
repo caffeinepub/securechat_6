@@ -1,0 +1,287 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Fonts ─── */
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/assets/fonts/PlusJakartaSans[wght].woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Figtree";
+  src: url("/assets/fonts/Figtree[wght].woff2") format("woff2");
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    --radius: 0.75rem;
+
+    /* ── Core palette: Teal-green messaging theme ── */
+    --background: 0.98 0.005 195;
+    --foreground: 0.14 0.025 250;
+    --card: 1 0 0;
+    --card-foreground: 0.14 0.025 250;
+    --popover: 1 0 0;
+    --popover-foreground: 0.14 0.025 250;
+
+    /* Primary: Deep Teal */
+    --primary: 0.55 0.15 195;
+    --primary-foreground: 0.99 0 0;
+
+    /* Secondary: Soft slate */
+    --secondary: 0.94 0.015 240;
+    --secondary-foreground: 0.25 0.03 240;
+
+    --muted: 0.94 0.01 210;
+    --muted-foreground: 0.52 0.02 230;
+    --accent: 0.9 0.04 195;
+    --accent-foreground: 0.35 0.12 195;
+    --destructive: 0.577 0.245 27.325;
+    --destructive-foreground: 0.985 0 0;
+    --border: 0.88 0.015 220;
+    --input: 0.9 0.012 215;
+    --ring: 0.55 0.15 195;
+
+    /* Chat-specific tokens */
+    --bubble-own: 0.55 0.15 195;
+    --bubble-own-fg: 0.99 0 0;
+    --bubble-partner: 1 0 0;
+    --bubble-partner-fg: 0.14 0.025 250;
+    --chat-bg: 0.96 0.008 205;
+    --online-green: 0.72 0.18 143;
+    --read-tick: 0.55 0.15 195;
+    --delivered-tick: 0.58 0.015 230;
+
+    --chart-1: 0.646 0.222 41.116;
+    --chart-2: 0.6 0.118 184.704;
+    --chart-3: 0.398 0.07 227.392;
+    --chart-4: 0.828 0.189 84.429;
+    --chart-5: 0.769 0.188 70.08;
+    --sidebar: 0.98 0.005 195;
+    --sidebar-foreground: 0.14 0.025 250;
+    --sidebar-primary: 0.55 0.15 195;
+    --sidebar-primary-foreground: 0.99 0 0;
+    --sidebar-accent: 0.9 0.04 195;
+    --sidebar-accent-foreground: 0.35 0.12 195;
+    --sidebar-border: 0.88 0.015 220;
+    --sidebar-ring: 0.55 0.15 195;
+  }
+
+  .dark {
+    --background: 0.12 0.015 240;
+    --foreground: 0.95 0.01 210;
+    --card: 0.165 0.018 240;
+    --card-foreground: 0.95 0.01 210;
+    --popover: 0.19 0.018 240;
+    --popover-foreground: 0.95 0.01 210;
+
+    /* Primary: Bright Teal in dark mode */
+    --primary: 0.65 0.18 185;
+    --primary-foreground: 0.1 0.015 240;
+
+    --secondary: 0.22 0.02 240;
+    --secondary-foreground: 0.85 0.015 220;
+
+    --muted: 0.22 0.018 238;
+    --muted-foreground: 0.58 0.02 225;
+    --accent: 0.25 0.04 195;
+    --accent-foreground: 0.75 0.1 185;
+    --destructive: 0.704 0.191 22.216;
+    --destructive-foreground: 0.985 0 0;
+    --border: 1 0 0 / 10%;
+    --input: 1 0 0 / 12%;
+    --ring: 0.65 0.18 185;
+
+    /* Chat-specific dark mode */
+    --bubble-own: 0.55 0.18 185;
+    --bubble-own-fg: 0.99 0 0;
+    --bubble-partner: 0.22 0.02 240;
+    --bubble-partner-fg: 0.92 0.01 215;
+    --chat-bg: 0.14 0.015 238;
+    --online-green: 0.72 0.18 143;
+    --read-tick: 0.65 0.18 185;
+    --delivered-tick: 0.55 0.015 230;
+
+    --chart-1: 0.488 0.243 264.376;
+    --chart-2: 0.696 0.17 162.48;
+    --chart-3: 0.769 0.188 70.08;
+    --chart-4: 0.627 0.265 303.9;
+    --chart-5: 0.645 0.246 16.439;
+    --sidebar: 0.165 0.018 240;
+    --sidebar-foreground: 0.95 0.01 210;
+    --sidebar-primary: 0.65 0.18 185;
+    --sidebar-primary-foreground: 0.1 0.015 240;
+    --sidebar-accent: 0.25 0.04 195;
+    --sidebar-accent-foreground: 0.75 0.1 185;
+    --sidebar-border: 1 0 0 / 10%;
+    --sidebar-ring: 0.65 0.18 185;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Figtree", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Smooth scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/* ─── Keyframes ─── */
+@keyframes typing-dot {
+  0%, 80%, 100% {
+    transform: scale(0.7);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes message-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes message-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-16px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-online {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ─── Utilities ─── */
+@layer utilities {
+  .animate-message-in-right {
+    animation: message-in-right 0.22s ease-out forwards;
+  }
+
+  .animate-message-in-left {
+    animation: message-in-left 0.22s ease-out forwards;
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 0.3s ease-out forwards;
+  }
+
+  .typing-dot {
+    animation: typing-dot 1.2s infinite ease-in-out;
+  }
+
+  .typing-dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .typing-dot:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+
+  .online-pulse {
+    animation: pulse-online 2s infinite;
+  }
+
+  .chat-bg {
+    background-color: oklch(var(--chat-bg));
+  }
+
+  .bubble-own {
+    background-color: oklch(var(--bubble-own));
+    color: oklch(var(--bubble-own-fg));
+  }
+
+  .bubble-partner {
+    background-color: oklch(var(--bubble-partner));
+    color: oklch(var(--bubble-partner-fg));
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Glass morphism effect for chat header */
+  .glass-header {
+    backdrop-filter: blur(16px) saturate(1.8);
+    -webkit-backdrop-filter: blur(16px) saturate(1.8);
+    background-color: oklch(var(--card) / 0.85);
+    border-bottom: 1px solid oklch(var(--border));
+  }
+
+  .glass-input {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    background-color: oklch(var(--card) / 0.9);
+    border-top: 1px solid oklch(var(--border));
+  }
+}
+
+/* ─── Auth page background ─── */
+.auth-gradient {
+  background: 
+    radial-gradient(ellipse 80% 60% at 20% 20%, oklch(0.55 0.15 195 / 0.15) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 80% at 80% 80%, oklch(0.65 0.18 185 / 0.1) 0%, transparent 50%),
+    oklch(var(--background));
+}
+
+.dark .auth-gradient {
+  background: 
+    radial-gradient(ellipse 80% 60% at 20% 20%, oklch(0.55 0.18 185 / 0.2) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 80% at 80% 80%, oklch(0.45 0.12 195 / 0.15) 0%, transparent 50%),
+    oklch(var(--background));
+}
+
+/* ─── Emoji mart overrides ─── */
+em-emoji-picker {
+  --font-family: "Figtree", sans-serif;
+  --border-radius: 12px;
+  --shadow: 0 8px 40px rgba(0, 0, 0, 0.18);
+}
