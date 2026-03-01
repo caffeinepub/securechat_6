@@ -26,7 +26,7 @@ export interface RegistrationInput {
   'email' : string,
   'passwordHash' : string,
 }
-export interface UserProfile {
+export interface SafeUserProfile {
   'typingTimestamp' : bigint,
   'profileImageId' : [] | [string],
   'name' : string,
@@ -34,7 +34,6 @@ export interface UserProfile {
   'email' : string,
   'partnerId' : [] | [Principal],
   'isTyping' : boolean,
-  'passwordHash' : string,
   'lastSeen' : bigint,
   'online' : boolean,
 }
@@ -70,25 +69,28 @@ export interface _SERVICE {
   '_caffeineStorageUpdateGatewayPrincipals' : ActorMethod<[], undefined>,
   '_initializeAccessControlWithSecret' : ActorMethod<[string], undefined>,
   'assignCallerUserRole' : ActorMethod<[Principal, UserRole], undefined>,
-  'getCallerUserProfile' : ActorMethod<[], [] | [UserProfile]>,
+  'generateTOTPSecret' : ActorMethod<[string], string>,
+  'getCallerUserProfile' : ActorMethod<[], [] | [SafeUserProfile]>,
   'getCallerUserRole' : ActorMethod<[], UserRole>,
   'getMessages' : ActorMethod<[Principal, bigint, bigint], Array<Message>>,
-  'getOwnProfile' : ActorMethod<[], UserProfile>,
+  'getOrCreateProfile' : ActorMethod<[string], { 'isNew' : boolean }>,
+  'getOwnProfile' : ActorMethod<[], SafeUserProfile>,
   'getOwnProfileImageId' : ActorMethod<[], [] | [string]>,
   'getPartnerTyping' : ActorMethod<[], boolean>,
   'getProfilePictureId' : ActorMethod<[Principal], [] | [string]>,
   'getUnreadMessageCount' : ActorMethod<[Principal], bigint>,
-  'getUserProfile' : ActorMethod<[Principal], [] | [UserProfile]>,
+  'getUserProfile' : ActorMethod<[Principal], [] | [SafeUserProfile]>,
   'hasImageId' : ActorMethod<[string], boolean>,
   'isCallerAdmin' : ActorMethod<[], boolean>,
   'login' : ActorMethod<[LoginInput], boolean>,
   'markAsRead' : ActorMethod<[Principal], undefined>,
   'register' : ActorMethod<[RegistrationInput], undefined>,
-  'saveCallerUserProfile' : ActorMethod<[UserProfile], undefined>,
+  'saveCallerUserProfile' : ActorMethod<[SafeUserProfile], undefined>,
   'sendMessage' : ActorMethod<[MessageInput], undefined>,
   'setProfilePicture' : ActorMethod<[string], undefined>,
   'setTyping' : ActorMethod<[boolean], undefined>,
   'updateOnlineStatus' : ActorMethod<[boolean], undefined>,
+  'verifyTOTP' : ActorMethod<[string, string], boolean>,
 }
 export declare const idlService: IDL.ServiceClass;
 export declare const idlInitArgs: IDL.Type[];

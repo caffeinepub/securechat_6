@@ -24,7 +24,7 @@ export const UserRole = IDL.Variant({
   'user' : IDL.Null,
   'guest' : IDL.Null,
 });
-export const UserProfile = IDL.Record({
+export const SafeUserProfile = IDL.Record({
   'typingTimestamp' : IDL.Int,
   'profileImageId' : IDL.Opt(IDL.Text),
   'name' : IDL.Text,
@@ -32,7 +32,6 @@ export const UserProfile = IDL.Record({
   'email' : IDL.Text,
   'partnerId' : IDL.Opt(IDL.Principal),
   'isTyping' : IDL.Bool,
-  'passwordHash' : IDL.Text,
   'lastSeen' : IDL.Int,
   'online' : IDL.Bool,
 });
@@ -88,14 +87,20 @@ export const idlService = IDL.Service({
   '_caffeineStorageUpdateGatewayPrincipals' : IDL.Func([], [], []),
   '_initializeAccessControlWithSecret' : IDL.Func([IDL.Text], [], []),
   'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
-  'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
+  'generateTOTPSecret' : IDL.Func([IDL.Text], [IDL.Text], []),
+  'getCallerUserProfile' : IDL.Func([], [IDL.Opt(SafeUserProfile)], ['query']),
   'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
   'getMessages' : IDL.Func(
       [IDL.Principal, IDL.Nat, IDL.Nat],
       [IDL.Vec(Message)],
       ['query'],
     ),
-  'getOwnProfile' : IDL.Func([], [UserProfile], ['query']),
+  'getOrCreateProfile' : IDL.Func(
+      [IDL.Text],
+      [IDL.Record({ 'isNew' : IDL.Bool })],
+      ['query'],
+    ),
+  'getOwnProfile' : IDL.Func([], [SafeUserProfile], ['query']),
   'getOwnProfileImageId' : IDL.Func([], [IDL.Opt(IDL.Text)], ['query']),
   'getPartnerTyping' : IDL.Func([], [IDL.Bool], ['query']),
   'getProfilePictureId' : IDL.Func(
@@ -106,7 +111,7 @@ export const idlService = IDL.Service({
   'getUnreadMessageCount' : IDL.Func([IDL.Principal], [IDL.Nat], ['query']),
   'getUserProfile' : IDL.Func(
       [IDL.Principal],
-      [IDL.Opt(UserProfile)],
+      [IDL.Opt(SafeUserProfile)],
       ['query'],
     ),
   'hasImageId' : IDL.Func([IDL.Text], [IDL.Bool], ['query']),
@@ -114,11 +119,12 @@ export const idlService = IDL.Service({
   'login' : IDL.Func([LoginInput], [IDL.Bool], ['query']),
   'markAsRead' : IDL.Func([IDL.Principal], [], []),
   'register' : IDL.Func([RegistrationInput], [], []),
-  'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
+  'saveCallerUserProfile' : IDL.Func([SafeUserProfile], [], []),
   'sendMessage' : IDL.Func([MessageInput], [], []),
   'setProfilePicture' : IDL.Func([IDL.Text], [], []),
   'setTyping' : IDL.Func([IDL.Bool], [], []),
   'updateOnlineStatus' : IDL.Func([IDL.Bool], [], []),
+  'verifyTOTP' : IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], ['query']),
 });
 
 export const idlInitArgs = [];
@@ -140,7 +146,7 @@ export const idlFactory = ({ IDL }) => {
     'user' : IDL.Null,
     'guest' : IDL.Null,
   });
-  const UserProfile = IDL.Record({
+  const SafeUserProfile = IDL.Record({
     'typingTimestamp' : IDL.Int,
     'profileImageId' : IDL.Opt(IDL.Text),
     'name' : IDL.Text,
@@ -148,7 +154,6 @@ export const idlFactory = ({ IDL }) => {
     'email' : IDL.Text,
     'partnerId' : IDL.Opt(IDL.Principal),
     'isTyping' : IDL.Bool,
-    'passwordHash' : IDL.Text,
     'lastSeen' : IDL.Int,
     'online' : IDL.Bool,
   });
@@ -204,14 +209,24 @@ export const idlFactory = ({ IDL }) => {
     '_caffeineStorageUpdateGatewayPrincipals' : IDL.Func([], [], []),
     '_initializeAccessControlWithSecret' : IDL.Func([IDL.Text], [], []),
     'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
-    'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
+    'generateTOTPSecret' : IDL.Func([IDL.Text], [IDL.Text], []),
+    'getCallerUserProfile' : IDL.Func(
+        [],
+        [IDL.Opt(SafeUserProfile)],
+        ['query'],
+      ),
     'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
     'getMessages' : IDL.Func(
         [IDL.Principal, IDL.Nat, IDL.Nat],
         [IDL.Vec(Message)],
         ['query'],
       ),
-    'getOwnProfile' : IDL.Func([], [UserProfile], ['query']),
+    'getOrCreateProfile' : IDL.Func(
+        [IDL.Text],
+        [IDL.Record({ 'isNew' : IDL.Bool })],
+        ['query'],
+      ),
+    'getOwnProfile' : IDL.Func([], [SafeUserProfile], ['query']),
     'getOwnProfileImageId' : IDL.Func([], [IDL.Opt(IDL.Text)], ['query']),
     'getPartnerTyping' : IDL.Func([], [IDL.Bool], ['query']),
     'getProfilePictureId' : IDL.Func(
@@ -222,7 +237,7 @@ export const idlFactory = ({ IDL }) => {
     'getUnreadMessageCount' : IDL.Func([IDL.Principal], [IDL.Nat], ['query']),
     'getUserProfile' : IDL.Func(
         [IDL.Principal],
-        [IDL.Opt(UserProfile)],
+        [IDL.Opt(SafeUserProfile)],
         ['query'],
       ),
     'hasImageId' : IDL.Func([IDL.Text], [IDL.Bool], ['query']),
@@ -230,11 +245,12 @@ export const idlFactory = ({ IDL }) => {
     'login' : IDL.Func([LoginInput], [IDL.Bool], ['query']),
     'markAsRead' : IDL.Func([IDL.Principal], [], []),
     'register' : IDL.Func([RegistrationInput], [], []),
-    'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
+    'saveCallerUserProfile' : IDL.Func([SafeUserProfile], [], []),
     'sendMessage' : IDL.Func([MessageInput], [], []),
     'setProfilePicture' : IDL.Func([IDL.Text], [], []),
     'setTyping' : IDL.Func([IDL.Bool], [], []),
     'updateOnlineStatus' : IDL.Func([IDL.Bool], [], []),
+    'verifyTOTP' : IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], ['query']),
   });
 };
 

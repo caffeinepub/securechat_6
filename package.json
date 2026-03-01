@@ -14,5 +14,10 @@
   },
   "devDependencies": {
     "sharp": "^0.34.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "@noble/hashes": "^1.8.0"
+    }
   }
 }

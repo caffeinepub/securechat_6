@@ -95,12 +95,19 @@ export interface RegistrationInput {
     email: string;
     passwordHash: string;
 }
-export interface LoginInput {
-    email: string;
-    passwordHash: string;
-}
 export interface _CaffeineStorageRefillInformation {
     proposed_top_up_amount?: bigint;
+}
+export interface SafeUserProfile {
+    typingTimestamp: bigint;
+    profileImageId?: string;
+    name: string;
+    partnerEmail: string;
+    email: string;
+    partnerId?: Principal;
+    isTyping: boolean;
+    lastSeen: bigint;
+    online: boolean;
 }
 export interface Message {
     id: bigint;
@@ -118,21 +125,13 @@ export interface MessageInput {
     content: string;
     receiverId: Principal;
 }
-export interface UserProfile {
-    typingTimestamp: bigint;
-    profileImageId?: string;
-    name: string;
-    partnerEmail: string;
-    email: string;
-    partnerId?: Principal;
-    isTyping: boolean;
-    passwordHash: string;
-    lastSeen: bigint;
-    online: boolean;
-}
 export interface _CaffeineStorageRefillResult {
     success?: boolean;
     topped_up_amount?: bigint;
+}
+export interface LoginInput {
+    email: string;
+    passwordHash: string;
 }
 export enum UserRole {
     admin = "admin",
@@ -148,27 +147,32 @@ export interface backendInterface {
     _caffeineStorageUpdateGatewayPrincipals(): Promise<void>;
     _initializeAccessControlWithSecret(userSecret: string): Promise<void>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
-    getCallerUserProfile(): Promise<UserProfile | null>;
+    generateTOTPSecret(phoneEmail: string): Promise<string>;
+    getCallerUserProfile(): Promise<SafeUserProfile | null>;
     getCallerUserRole(): Promise<UserRole>;
     getMessages(partnerId: Principal, startIndex: bigint, pageSize: bigint): Promise<Array<Message>>;
-    getOwnProfile(): Promise<UserProfile>;
+    getOrCreateProfile(phoneEmail: string): Promise<{
+        isNew: boolean;
+    }>;
+    getOwnProfile(): Promise<SafeUserProfile>;
     getOwnProfileImageId(): Promise<string | null>;
     getPartnerTyping(): Promise<boolean>;
     getProfilePictureId(user: Principal): Promise<string | null>;
     getUnreadMessageCount(partnerId: Principal): Promise<bigint>;
-    getUserProfile(user: Principal): Promise<UserProfile | null>;
+    getUserProfile(user: Principal): Promise<SafeUserProfile | null>;
     hasImageId(imageId: string): Promise<boolean>;
     isCallerAdmin(): Promise<boolean>;
     login(input: LoginInput): Promise<boolean>;
     markAsRead(partnerId: Principal): Promise<void>;
     register(input: RegistrationInput): Promise<void>;
-    saveCallerUserProfile(profile: UserProfile): Promise<void>;
+    saveCallerUserProfile(profile: SafeUserProfile): Promise<void>;
     sendMessage(input: MessageInput): Promise<void>;
     setProfilePicture(imageId: string): Promise<void>;
     setTyping(isTyping: boolean): Promise<void>;
     updateOnlineStatus(online: boolean): Promise<void>;
+    verifyTOTP(phoneEmail: string, code: string): Promise<boolean>;
 }
-import type { UserProfile as _UserProfile, UserRole as _UserRole, _CaffeineStorageRefillInformation as __CaffeineStorageRefillInformation, _CaffeineStorageRefillResult as __CaffeineStorageRefillResult } from "./declarations/backend.did.d.ts";
+import type { SafeUserProfile as _SafeUserProfile, UserRole as _UserRole, _CaffeineStorageRefillInformation as __CaffeineStorageRefillInformation, _CaffeineStorageRefillResult as __CaffeineStorageRefillResult } from "./declarations/backend.did.d.ts";
 export class Backend implements backendInterface {
     constructor(private actor: ActorSubclass<_SERVICE>, private _uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, private _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, private processError?: (error: unknown) => never){}
     async _caffeineStorageBlobIsLive(arg0: Uint8Array): Promise<boolean> {
@@ -283,7 +287,21 @@ export class Backend implements backendInterface {
             return result;
         }
     }
-    async getCallerUserProfile(): Promise<UserProfile | null> {
+    async generateTOTPSecret(arg0: string): Promise<string> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.generateTOTPSecret(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.generateTOTPSecret(arg0);
+            return result;
+        }
+    }
+    async getCallerUserProfile(): Promise<SafeUserProfile | null> {
         if (this.processError) {
             try {
                 const result = await this.actor.getCallerUserProfile();
@@ -325,18 +343,34 @@ export class Backend implements backendInterface {
             return result;
         }
     }
-    async getOwnProfile(): Promise<UserProfile> {
+    async getOrCreateProfile(arg0: string): Promise<{
+        isNew: boolean;
+    }> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getOrCreateProfile(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getOrCreateProfile(arg0);
+            return result;
+        }
+    }
+    async getOwnProfile(): Promise<SafeUserProfile> {
         if (this.processError) {
             try {
                 const result = await this.actor.getOwnProfile();
-                return from_candid_UserProfile_n11(this._uploadFile, this._downloadFile, result);
+                return from_candid_SafeUserProfile_n11(this._uploadFile, this._downloadFile, result);
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
             const result = await this.actor.getOwnProfile();
-            return from_candid_UserProfile_n11(this._uploadFile, this._downloadFile, result);
+            return from_candid_SafeUserProfile_n11(this._uploadFile, this._downloadFile, result);
         }
     }
     async getOwnProfileImageId(): Promise<string | null> {
@@ -395,7 +429,7 @@ export class Backend implements backendInterface {
             return result;
         }
     }
-    async getUserProfile(arg0: Principal): Promise<UserProfile | null> {
+    async getUserProfile(arg0: Principal): Promise<SafeUserProfile | null> {
         if (this.processError) {
             try {
                 const result = await this.actor.getUserProfile(arg0);
@@ -479,17 +513,17 @@ export class Backend implements backendInterface {
             return result;
         }
     }
-    async saveCallerUserProfile(arg0: UserProfile): Promise<void> {
+    async saveCallerUserProfile(arg0: SafeUserProfile): Promise<void> {
         if (this.processError) {
             try {
-                const result = await this.actor.saveCallerUserProfile(to_candid_UserProfile_n17(this._uploadFile, this._downloadFile, arg0));
+                const result = await this.actor.saveCallerUserProfile(to_candid_SafeUserProfile_n17(this._uploadFile, this._downloadFile, arg0));
                 return result;
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
-            const result = await this.actor.saveCallerUserProfile(to_candid_UserProfile_n17(this._uploadFile, this._downloadFile, arg0));
+            const result = await this.actor.saveCallerUserProfile(to_candid_SafeUserProfile_n17(this._uploadFile, this._downloadFile, arg0));
             return result;
         }
     }
@@ -549,8 +583,22 @@ export class Backend implements backendInterface {
             return result;
         }
     }
+    async verifyTOTP(arg0: string, arg1: string): Promise<boolean> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.verifyTOTP(arg0, arg1);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.verifyTOTP(arg0, arg1);
+            return result;
+        }
+    }
 }
-function from_candid_UserProfile_n11(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: _UserProfile): UserProfile {
+function from_candid_SafeUserProfile_n11(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: _SafeUserProfile): SafeUserProfile {
     return from_candid_record_n12(_uploadFile, _downloadFile, value);
 }
 function from_candid_UserRole_n15(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: _UserRole): UserRole {
@@ -559,8 +607,8 @@ function from_candid_UserRole_n15(_uploadFile: (file: ExternalBlob) => Promise<U
 function from_candid__CaffeineStorageRefillResult_n4(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: __CaffeineStorageRefillResult): _CaffeineStorageRefillResult {
     return from_candid_record_n5(_uploadFile, _downloadFile, value);
 }
-function from_candid_opt_n10(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: [] | [_UserProfile]): UserProfile | null {
-    return value.length === 0 ? null : from_candid_UserProfile_n11(_uploadFile, _downloadFile, value[0]);
+function from_candid_opt_n10(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: [] | [_SafeUserProfile]): SafeUserProfile | null {
+    return value.length === 0 ? null : from_candid_SafeUserProfile_n11(_uploadFile, _downloadFile, value[0]);
 }
 function from_candid_opt_n13(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: [] | [string]): string | null {
     return value.length === 0 ? null : value[0];
@@ -582,7 +630,6 @@ function from_candid_record_n12(_uploadFile: (file: ExternalBlob) => Promise<Uin
     email: string;
     partnerId: [] | [Principal];
     isTyping: boolean;
-    passwordHash: string;
     lastSeen: bigint;
     online: boolean;
 }): {
@@ -593,7 +640,6 @@ function from_candid_record_n12(_uploadFile: (file: ExternalBlob) => Promise<Uin
     email: string;
     partnerId?: Principal;
     isTyping: boolean;
-    passwordHash: string;
     lastSeen: bigint;
     online: boolean;
 } {
@@ -605,7 +651,6 @@ function from_candid_record_n12(_uploadFile: (file: ExternalBlob) => Promise<Uin
         email: value.email,
         partnerId: record_opt_to_undefined(from_candid_opt_n14(_uploadFile, _downloadFile, value.partnerId)),
         isTyping: value.isTyping,
-        passwordHash: value.passwordHash,
         lastSeen: value.lastSeen,
         online: value.online
     };
@@ -631,7 +676,7 @@ function from_candid_variant_n16(_uploadFile: (file: ExternalBlob) => Promise<Ui
 }): UserRole {
     return "admin" in value ? UserRole.admin : "user" in value ? UserRole.user : "guest" in value ? UserRole.guest : value;
 }
-function to_candid_UserProfile_n17(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: UserProfile): _UserProfile {
+function to_candid_SafeUserProfile_n17(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: SafeUserProfile): _SafeUserProfile {
     return to_candid_record_n18(_uploadFile, _downloadFile, value);
 }
 function to_candid_UserRole_n8(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: UserRole): _UserRole {
@@ -651,7 +696,6 @@ function to_candid_record_n18(_uploadFile: (file: ExternalBlob) => Promise<Uint8
     email: string;
     partnerId?: Principal;
     isTyping: boolean;
-    passwordHash: string;
     lastSeen: bigint;
     online: boolean;
 }): {
@@ -662,7 +706,6 @@ function to_candid_record_n18(_uploadFile: (file: ExternalBlob) => Promise<Uint8
     email: string;
     partnerId: [] | [Principal];
     isTyping: boolean;
-    passwordHash: string;
     lastSeen: bigint;
     online: boolean;
 } {
@@ -674,7 +717,6 @@ function to_candid_record_n18(_uploadFile: (file: ExternalBlob) => Promise<Uint8
         email: value.email,
         partnerId: value.partnerId ? candid_some(value.partnerId) : candid_none(),
         isTyping: value.isTyping,
-        passwordHash: value.passwordHash,
         lastSeen: value.lastSeen,
         online: value.online
     };

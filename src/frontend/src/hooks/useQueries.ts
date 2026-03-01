@@ -1,13 +1,13 @@
 import type { Principal } from "@icp-sdk/core/principal";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Message, UserProfile } from "../backend.d";
+import type { Message, SafeUserProfile } from "../backend.d";
 import { useDerivedActor } from "./useDerivedActor";
 
 // ─── Profile queries ───────────────────────────────────────────────────────
 
 export function useOwnProfile() {
   const { actor, isFetching } = useDerivedActor();
-  return useQuery<UserProfile | null>({
+  return useQuery<SafeUserProfile | null>({
     queryKey: ["ownProfile"],
     queryFn: async () => {
       if (!actor) return null;
@@ -19,7 +19,7 @@ export function useOwnProfile() {
 
 export function useUserProfile(principal: Principal | null) {
   const { actor, isFetching } = useDerivedActor();
-  return useQuery<UserProfile | null>({
+  return useQuery<SafeUserProfile | null>({
     queryKey: ["userProfile", principal?.toString()],
     queryFn: async () => {
       if (!actor || !principal) return null;
@@ -173,7 +173,7 @@ export function useSaveProfile() {
   const { actor } = useDerivedActor();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (profile: UserProfile) => {
+    mutationFn: async (profile: SafeUserProfile) => {
       if (!actor) throw new Error("Actor not ready");
       return actor.saveCallerUserProfile(profile);
     },

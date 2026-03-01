@@ -1,28 +1,39 @@
 # SecureChat
 
 ## Current State
-The app has email + password registration/login, pre-approved partner by email, AES-GCM encrypted chat, emoji support, typing indicator, read receipts, dark/light mode, and profile picture upload.
+- Mobile number + simulated OTP login (code generated client-side, shown on screen, stored in localStorage)
+- Three-step auth flow: enter phone → verify fake OTP → set partner number
+- Backend stores email/passwordHash per user (phone number converted to email-style string)
+- Ed25519 identity derived from phone + password hash to get a unique IC Principal
+- AES-GCM end-to-end encrypted messages between one pre-approved partner
+- Chat features: emoji, timestamps, read receipts, typing indicator, online/offline status
 
 ## Requested Changes (Diff)
 
 ### Add
-- Mobile number entry screen as the only login method
-- Simulated OTP flow: user enters phone number, backend generates a 6-digit OTP and returns it (simulated, no SMS), user enters the code to authenticate
-- Session token stored in localStorage after successful OTP verification
-- Pre-approved partner stored as a mobile number (set once on first login)
+- TOTP secret generation: when a user registers for the first time, generate a TOTP secret server-side and return it once for QR code display
+- QR code display: show a `otpauth://` URI as a QR code so the user can scan it with Google Authenticator, Authy, or any TOTP app
+- TOTP verification: replace the simulated OTP check with a real server-side TOTP code validation (RFC 6238, HMAC-SHA1, 6-digit, 30-second window, ±1 step tolerance)
+- Backend: `generateTOTPSecret(phone)` returns a base32 TOTP secret (for new users only), `verifyTOTP(phone, code)` validates a 6-digit TOTP code
 
 ### Modify
-- Replace all email/password registration and login flows with mobile-number + OTP flow
-- Replace partner email field with partner mobile number field
-- Identity derivation based on mobile number instead of email+password
-- All user records use mobile number as the unique identifier
+- Auth flow: "phone → scan QR (first time only) → enter TOTP code → set partner" for new users; "phone → enter TOTP code" for returning users
+- OTPAuthPage: remove simulated SMS banner; replace with QR code scan step for new users and direct code entry for existing users
+- Backend UserProfile: replace `passwordHash` with `totpSecret` (base32 string); remove email/password fields not needed for TOTP login
 
 ### Remove
-- Email input fields
-- Password input fields
-- Sign up / Log in distinction (single flow: enter number -> verify OTP -> done)
-- Any reference to email in the UI or backend
+- Simulated OTP generation and localStorage storage of OTP codes
+- SMS-related UI copy ("We'll send a verification code to your phone")
+- hashPhonePassword utility (no longer needed)
 
 ## Implementation Plan
-1. Backend: rewrite user store to key on mobile number; add `requestOtp(phone)` which generates+stores a 6-digit OTP; add `verifyOtp(phone, code)` which checks the code, creates/retrieves the user, and returns a session token; update all auth checks to use session token; keep existing chat, message, typing, read-receipt logic intact but wire to phone-based identity
-2. Frontend: replace auth screens with two-step flow (Step 1: enter mobile number, Step 2: enter 6-digit OTP); after verification show partner setup if first login (enter partner's mobile number); then go straight to chat UI; preserve all existing chat features (bubbles, emoji, timestamps, read receipts, typing indicator, dark/light mode)
+1. Update Motoko backend: add TOTP secret storage to UserProfile, implement HMAC-SHA1-based TOTP verification, add `generateTOTPSecret` and `verifyTOTP` endpoints
+2. Update backend.d.ts to reflect new API (generateTOTPSecret, verifyTOTP, updated UserProfile without passwordHash)
+3. Rewrite OTPAuthPage: 
+   - Step 1: enter phone number
+   - Step 2a (new user): show QR code + instructions to scan with authenticator app, then enter first code to confirm
+   - Step 2b (returning user): enter 6-digit TOTP code directly
+   - Step 3 (new user only): set partner phone number
+4. Update identity derivation: use phone + totpSecret (from backend) instead of phone + passwordHash
+5. Remove LoginPage and SignupPage if still referenced; ensure App.tsx uses only OTPAuthPage (TOTP variant)
+6. Install qrcode package for QR code rendering in frontend

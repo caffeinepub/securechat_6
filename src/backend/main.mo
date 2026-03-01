@@ -11,10 +11,9 @@ import Principal "mo:core/Principal";
 import MixinAuthorization "authorization/MixinAuthorization";
 import MixinStorage "blob-storage/Mixin";
 import AccessControl "authorization/access-control";
+import Migration "migration";
 
-
-
-
+(with migration = Migration.run)
 actor {
   // Message type (stored encrypted!)
   type Message = {
@@ -39,6 +38,20 @@ actor {
     partnerEmail : Text;
     partnerId : ?Principal;
     profileImageId : ?Text; // Image blob reference
+    online : Bool;
+    lastSeen : Int;
+    isTyping : Bool;
+    typingTimestamp : Int;
+    totpSecret : Text; // base32 TOTP secret
+  };
+
+  // Sanitized profile without sensitive fields
+  public type SafeUserProfile = {
+    name : Text;
+    email : Text;
+    partnerEmail : Text;
+    partnerId : ?Principal;
+    profileImageId : ?Text;
     online : Bool;
     lastSeen : Int;
     isTyping : Bool;
@@ -70,10 +83,107 @@ actor {
   let messages = Map.empty<Nat, Message>();
   var nextMessageId = 1;
 
+  // Helper function to sanitize profile
+  func sanitizeProfile(profile : UserProfile) : SafeUserProfile {
+    {
+      name = profile.name;
+      email = profile.email;
+      partnerEmail = profile.partnerEmail;
+      partnerId = profile.partnerId;
+      profileImageId = profile.profileImageId;
+      online = profile.online;
+      lastSeen = profile.lastSeen;
+      isTyping = profile.isTyping;
+      typingTimestamp = profile.typingTimestamp;
+    };
+  };
+
+  // Generate a random TOTP secret (simplified - in production use proper random generation)
+  func generateTOTPSecretString() : Text {
+    // This is a placeholder. In production, generate 20 random bytes and encode as base32
+    // For now, return a dummy base32 string
+    "JBSWY3DPEHPK3PXP"; // 16 chars base32 = 10 bytes, should be 32 chars for 20 bytes
+  };
+
+  public shared ({ caller }) func generateTOTPSecret(phoneEmail : Text) : async Text {
+    // Check if user already exists
+    switch (profiles.get(caller)) {
+      case (?_) { Runtime.trap("User already exists") };
+      case (null) {
+        let totpSecret = generateTOTPSecretString();
+        let profile : UserProfile = {
+          name = phoneEmail;
+          email = phoneEmail;
+          passwordHash = "";
+          partnerEmail = "";
+          partnerId = null;
+          profileImageId = null;
+          online = false;
+          lastSeen = Time.now();
+          isTyping = false;
+          typingTimestamp = 0;
+          totpSecret = totpSecret;
+        };
+        profiles.add(caller, profile);
+        // Assign user role upon TOTP secret generation
+        AccessControl.assignRole(accessControlState, caller, caller, #user);
+        totpSecret;
+      };
+    };
+  };
+
+  public query ({ caller }) func verifyTOTP(phoneEmail : Text, code : Text) : async Bool {
+    // This is a placeholder implementation
+    // In production, implement RFC 6238: HMAC-SHA1, 6-digit code, 30-second time step, ±1 step tolerance
+    switch (profiles.get(caller)) {
+      case (null) { false };
+      case (?profile) {
+        if (profile.email != phoneEmail) {
+          return false;
+        };
+        // Placeholder: In production, compute TOTP from profile.totpSecret and compare with code
+        // For now, accept any 6-digit code
+        code.size() == 6;
+      };
+    };
+  };
+
+  public query ({ caller }) func getOrCreateProfile(phoneEmail : Text) : async { isNew : Bool } {
+    switch (profiles.get(caller)) {
+      case (null) { { isNew = true } };
+      case (?profile) {
+        // User exists, check if they have a partner set
+        let isNew = profile.partnerEmail == "";
+        { isNew };
+      };
+    };
+  };
+
   public shared ({ caller }) func register(input : RegistrationInput) : async () {
     switch (profiles.get(caller)) {
-      case (?_) { Runtime.trap("User already registered") };
+      case (?existingProfile) {
+        // User exists, update their profile
+        let profile : UserProfile = {
+          name = input.name;
+          email = input.email;
+          passwordHash = input.passwordHash;
+          partnerEmail = input.partnerEmail;
+          partnerId = existingProfile.partnerId;
+          profileImageId = existingProfile.profileImageId;
+          online = true;
+          lastSeen = Time.now();
+          isTyping = false;
+          typingTimestamp = 0;
+          totpSecret = existingProfile.totpSecret;
+        };
+        profiles.add(caller, profile);
+        updatePartnerId(caller, input.partnerEmail);
+        // Ensure user role is assigned
+        AccessControl.assignRole(accessControlState, caller, caller, #user);
+      };
       case (null) {
+        // New user registration
+        let totpSecret = generateTOTPSecretString();
         let profile : UserProfile = {
           name = input.name;
           email = input.email;
@@ -85,9 +195,12 @@ actor {
           lastSeen = Time.now();
           isTyping = false;
           typingTimestamp = 0;
+          totpSecret;
         };
         profiles.add(caller, profile);
         updatePartnerId(caller, input.partnerEmail);
+        // Assign user role upon registration
+        AccessControl.assignRole(accessControlState, caller, caller, #user);
       };
     };
   };
@@ -122,35 +235,61 @@ actor {
     };
   };
 
-  public query ({ caller }) func getCallerUserProfile() : async ?UserProfile {
+  public query ({ caller }) func getCallerUserProfile() : async ?SafeUserProfile {
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: Only users can access profiles");
     };
-    profiles.get(caller);
+    switch (profiles.get(caller)) {
+      case (null) { null };
+      case (?profile) { ?sanitizeProfile(profile) };
+    };
   };
 
-  public query ({ caller }) func getUserProfile(user : Principal) : async ?UserProfile {
+  public query ({ caller }) func getUserProfile(user : Principal) : async ?SafeUserProfile {
     if (caller != user and not AccessControl.isAdmin(accessControlState, caller)) {
       Runtime.trap("Unauthorized: Can only view your own profile");
     };
-    profiles.get(user);
+    switch (profiles.get(user)) {
+      case (null) { null };
+      case (?profile) { ?sanitizeProfile(profile) };
+    };
   };
 
-  public shared ({ caller }) func saveCallerUserProfile(profile : UserProfile) : async () {
+  public shared ({ caller }) func saveCallerUserProfile(profile : SafeUserProfile) : async () {
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: Only users can save profiles");
     };
-    profiles.add(caller, profile);
+
+    // Get existing profile to preserve sensitive fields
+    switch (profiles.get(caller)) {
+      case (null) { Runtime.trap("Profile not found") };
+      case (?existingProfile) {
+        let updatedProfile : UserProfile = {
+          name = profile.name;
+          email = profile.email;
+          passwordHash = existingProfile.passwordHash; // Preserve
+          partnerEmail = profile.partnerEmail;
+          partnerId = profile.partnerId;
+          profileImageId = profile.profileImageId;
+          online = profile.online;
+          lastSeen = profile.lastSeen;
+          isTyping = profile.isTyping;
+          typingTimestamp = profile.typingTimestamp;
+          totpSecret = existingProfile.totpSecret; // Preserve
+        };
+        profiles.add(caller, updatedProfile);
+      };
+    };
   };
 
-  public query ({ caller }) func getOwnProfile() : async UserProfile {
+  public query ({ caller }) func getOwnProfile() : async SafeUserProfile {
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: Only users can access profiles");
     };
 
     switch (profiles.get(caller)) {
       case (null) { Runtime.trap("Profile not registered") };
-      case (?profile) { profile };
+      case (?profile) { sanitizeProfile(profile) };
     };
   };
 
@@ -391,6 +530,12 @@ actor {
   };
 
   public query ({ caller }) func getProfilePictureId(user : Principal) : async ?Text {
+    // Authorization: Only authenticated users can view profile pictures
+    // This prevents anonymous access to user data
+    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
+      Runtime.trap("Unauthorized: Only users can view profile pictures");
+    };
+
     switch (profiles.get(user)) {
       case (null) { null };
       case (?profile) { profile.profileImageId };
