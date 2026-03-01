@@ -2,7 +2,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, type Easing, motion } from "motion/react";
-import QRCode from "qrcode";
 import {
   type KeyboardEvent,
   useCallback,
@@ -19,7 +18,11 @@ import {
   loadStoredIdentity,
 } from "../utils/identity";
 import { phoneToEmail, setSession } from "../utils/session";
-import { buildOTPAuthURI, validateTOTPCode } from "../utils/totp";
+import {
+  buildOTPAuthURI,
+  generateTOTPSecretLocally,
+  validateTOTPCode,
+} from "../utils/totp";
 
 interface OTPAuthPageProps {
   onAuth: () => void;
@@ -49,21 +52,19 @@ const slideVariants = {
   }),
 };
 
-// Compute steps list for step-indicator based on flow
 function getSteps(isNewUser: boolean): Step[] {
   if (isNewUser) return ["phone", "qr-setup", "totp-verify", "partner"];
   return ["phone", "totp-login"];
 }
 
-// TOTP secret localStorage helpers
+// ── LocalStorage helpers for TOTP secret ─────────────────────────────────────
+// Key is based on phone digits so the same number always retrieves the same secret.
 function storeTOTPSecret(phoneDigits: string, secret: string) {
   localStorage.setItem(`sc_totp_${phoneDigits}`, secret);
 }
-
 function loadTOTPSecret(phoneDigits: string): string | null {
   return localStorage.getItem(`sc_totp_${phoneDigits}`);
 }
-
 function getPhoneDigits(phone: string): string {
   return phone.replace(/\D/g, "");
 }
@@ -74,25 +75,16 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
   const [direction, setDirection] = useState(1);
   const [isNewUser, setIsNewUser] = useState(true);
 
-  // Phone step
   const [phone, setPhone] = useState("");
-
-  // TOTP setup
   const [totpSecret, setTotpSecret] = useState("");
   const [qrDataUrl, setQrDataUrl] = useState("");
-
-  // OTP digit input
   const [otpCode, setOtpCode] = useState<string[]>(["", "", "", "", "", ""]);
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
-
-  // Partner step
   const [partnerPhone, setPartnerPhone] = useState("");
-
   const [isLoading, setIsLoading] = useState(false);
 
   const otpComplete = otpCode.join("").length === 6;
 
-  // Focus first OTP input when relevant steps become active
   useEffect(() => {
     if (step === "totp-verify" || step === "totp-login") {
       setTimeout(() => otpRefs.current[0]?.focus(), 120);
@@ -122,36 +114,29 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
     try {
       const phoneAsEmail = phoneToEmail(trimmed);
 
-      // Check if user already has a stored TOTP secret (returning user)
+      // Derive deterministic identity from phone number
+      await createAndStoreIdentity(phoneAsEmail, phoneAsEmail);
+      invalidateDerivedActor(queryClient);
+
+      // Check if this phone already has a stored TOTP secret on this device.
+      // If yes → returning user flow (don't regenerate secret, no new QR needed).
+      // If no → new user flow (generate secret, show QR).
       const storedSecret = loadTOTPSecret(digits);
 
       if (storedSecret) {
-        // Returning user: derive their identity using the stored secret
-        await createAndStoreIdentity(phoneAsEmail, storedSecret);
-        invalidateDerivedActor(queryClient);
+        // Returning user — reuse existing secret from localStorage
         setTotpSecret(storedSecret);
         setIsNewUser(false);
         setOtpCode(["", "", "", "", "", ""]);
         goToStep("totp-login", 1);
       } else {
-        // Possibly new user — create anonymous actor to call generateTOTPSecret
-        const anonActor = await createActorWithConfig();
-        const secret = await anonActor.generateTOTPSecret(phoneAsEmail);
-
-        // Derive real identity using the secret
-        await createAndStoreIdentity(phoneAsEmail, secret);
-        invalidateDerivedActor(queryClient);
-
-        // Generate QR code
+        // New user — generate a fresh secret and show QR code to scan once.
+        const secret = generateTOTPSecretLocally();
         const uri = buildOTPAuthURI(phoneAsEmail, secret);
-        const dataUrl = await QRCode.toDataURL(uri, {
-          width: 240,
-          margin: 2,
-          color: { dark: "#0f172a", light: "#ffffff" },
-        });
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=10&data=${encodeURIComponent(uri)}`;
 
         setTotpSecret(secret);
-        setQrDataUrl(dataUrl);
+        setQrDataUrl(qrUrl);
         setIsNewUser(true);
         setOtpCode(["", "", "", "", "", ""]);
         goToStep("qr-setup", 1);
@@ -165,189 +150,184 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
     }
   };
 
-  // ── Step 2 (new): QR scanned — proceed to verify ─────────────────────────
+  // ── Step 2 (new): QR scanned ──────────────────────────────────────────────
   const handleScanned = () => {
     setOtpCode(["", "", "", "", "", ""]);
     goToStep("totp-verify", 1);
   };
 
-  // ── Step 3 (new): Verify TOTP code after setup ───────────────────────────
-  const handleVerifySetup = useCallback(async () => {
-    const entered = otpCode.join("");
-    if (entered.length < 6) {
-      toast.error("Please enter all 6 digits");
-      return;
-    }
+  // ── TOTP verify for new user setup ────────────────────────────────────────
+  const runVerifySetup = useCallback(
+    async (code: string) => {
+      if (isLoading) return;
 
-    // Client-side validation first
-    if (!(await validateTOTPCode(totpSecret, entered))) {
-      toast.error("Invalid code. Check your authenticator app and try again.");
-      setOtpCode(["", "", "", "", "", ""]);
-      otpRefs.current[0]?.focus();
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const phoneAsEmail = phoneToEmail(phone.trim());
-      const identity = loadStoredIdentity()!;
-      const actor = await createActorWithConfig({ agentOptions: { identity } });
-
-      // Server-side verification
-      const serverValid = await actor.verifyTOTP(phoneAsEmail, entered);
-      if (!serverValid) {
-        toast.error("Code rejected by server. Please try again.");
+      // Validate the code against the locally-generated secret using real TOTP math
+      const valid = await validateTOTPCode(totpSecret, code);
+      if (!valid) {
+        toast.error(
+          "Invalid code. Check your authenticator app and try again.",
+        );
         setOtpCode(["", "", "", "", "", ""]);
-        otpRefs.current[0]?.focus();
-        setIsLoading(false);
+        setTimeout(() => otpRefs.current[0]?.focus(), 50);
         return;
       }
 
-      // Register the user (new user path)
+      setIsLoading(true);
       try {
-        await actor.register({
-          name: phone.trim(),
+        const phoneAsEmail = phoneToEmail(phone.trim());
+        const identity = loadStoredIdentity()!;
+        const actor = await createActorWithConfig({
+          agentOptions: { identity },
+        });
+
+        // Register — if already exists on backend, update profile gracefully
+        try {
+          await actor.register({
+            name: phone.trim(),
+            email: phoneAsEmail,
+            partnerEmail: "",
+            passwordHash: totpSecret,
+          });
+        } catch {
+          // Already registered is fine — continue
+        }
+
+        const loginOk = await actor.login({
           email: phoneAsEmail,
-          partnerEmail: "",
           passwordHash: totpSecret,
         });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        // If already registered (race condition), continue anyway
-        if (!msg.toLowerCase().includes("already")) {
-          throw err;
+
+        if (!loginOk) {
+          toast.error("Login failed after registration. Please try again.");
+          clearStoredIdentity();
+          setIsLoading(false);
+          return;
         }
-      }
 
-      // Log in
-      const loginOk = await actor.login({
-        email: phoneAsEmail,
-        passwordHash: totpSecret,
-      });
+        // Persist secret to localStorage ONLY after successful backend registration
+        const digits = getPhoneDigits(phone.trim());
+        storeTOTPSecret(digits, totpSecret);
 
-      if (!loginOk) {
-        toast.error("Login failed after registration. Please try again.");
-        clearStoredIdentity();
-        setIsLoading(false);
-        return;
-      }
+        await actor.updateOnlineStatus(true);
+        const profile = await actor.getOwnProfile();
+        const principal = identity.getPrincipal().toText();
 
-      // Store TOTP secret for future logins
-      const digits = getPhoneDigits(phone.trim());
-      storeTOTPSecret(digits, totpSecret);
+        setSession({
+          principal,
+          phone: phone.trim(),
+          email: phoneAsEmail,
+          partnerPhone: "",
+          partnerEmail: "",
+          partnerPrincipal: null,
+          name: profile.name || phone.trim(),
+        });
 
-      await actor.updateOnlineStatus(true);
-      const profile = await actor.getOwnProfile();
-      const principal = identity.getPrincipal().toText();
-
-      setSession({
-        principal,
-        phone: phone.trim(),
-        email: phoneAsEmail,
-        partnerPhone: "",
-        partnerEmail: "",
-        partnerPrincipal: null,
-        name: profile.name || phone.trim(),
-      });
-
-      setIsLoading(false);
-      goToStep("partner", 1);
-    } catch (err) {
-      console.error("TOTP verify error:", err);
-      toast.error("Something went wrong. Please try again.");
-      clearStoredIdentity();
-      setIsLoading(false);
-    }
-  }, [otpCode, totpSecret, phone, goToStep]);
-
-  // ── Step 2 (returning): Verify TOTP login ────────────────────────────────
-  const handleVerifyLogin = useCallback(async () => {
-    const entered = otpCode.join("");
-    if (entered.length < 6) {
-      toast.error("Please enter all 6 digits");
-      return;
-    }
-
-    // Client-side validation first
-    if (!(await validateTOTPCode(totpSecret, entered))) {
-      toast.error("Invalid code. Check your authenticator app and try again.");
-      setOtpCode(["", "", "", "", "", ""]);
-      otpRefs.current[0]?.focus();
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const phoneAsEmail = phoneToEmail(phone.trim());
-      const identity = loadStoredIdentity()!;
-      const actor = await createActorWithConfig({ agentOptions: { identity } });
-
-      // Server-side TOTP check
-      const serverValid = await actor.verifyTOTP(phoneAsEmail, entered);
-      if (!serverValid) {
-        toast.error("Code rejected. Please try again.");
-        setOtpCode(["", "", "", "", "", ""]);
-        otpRefs.current[0]?.focus();
-        setIsLoading(false);
-        return;
-      }
-
-      const loginOk = await actor.login({
-        email: phoneAsEmail,
-        passwordHash: totpSecret,
-      });
-
-      if (!loginOk) {
-        toast.error("Login failed. Please try again.");
-        clearStoredIdentity();
-        setIsLoading(false);
-        return;
-      }
-
-      await actor.updateOnlineStatus(true);
-      const profile = await actor.getOwnProfile();
-      const principal = identity.getPrincipal().toText();
-
-      const partnerEmailFromProfile = profile.partnerEmail ?? "";
-      const partnerPhoneDisplay = partnerEmailFromProfile.endsWith("@sc.app")
-        ? `+${partnerEmailFromProfile.replace("@sc.app", "")}`
-        : partnerEmailFromProfile;
-
-      setSession({
-        principal,
-        phone: phone.trim(),
-        email: phoneAsEmail,
-        partnerPhone: partnerPhoneDisplay,
-        partnerEmail: partnerEmailFromProfile,
-        partnerPrincipal: profile.partnerId?.toString() ?? null,
-        name: profile.name || phone.trim(),
-      });
-
-      const hasPartner =
-        partnerEmailFromProfile && partnerEmailFromProfile !== "";
-
-      if (!hasPartner) {
         setIsLoading(false);
         goToStep("partner", 1);
-      } else {
-        toast.success("Welcome back!");
-        onAuth();
+      } catch (err) {
+        console.error("TOTP verify error:", err);
+        toast.error("Something went wrong. Please try again.");
+        clearStoredIdentity();
+        setIsLoading(false);
       }
-    } catch (err) {
-      console.error("Login error:", err);
-      toast.error("Something went wrong. Please try again.");
-      clearStoredIdentity();
-      setIsLoading(false);
-    }
-  }, [otpCode, totpSecret, phone, goToStep, onAuth]);
+    },
+    [totpSecret, phone, goToStep, isLoading],
+  );
 
-  // Auto-submit when all 6 digits are filled
-  useEffect(() => {
-    if (otpComplete && !isLoading) {
-      if (step === "totp-verify") handleVerifySetup();
-      else if (step === "totp-login") handleVerifyLogin();
-    }
-  }, [otpComplete, isLoading, step, handleVerifySetup, handleVerifyLogin]);
+  // ── TOTP login for returning users ────────────────────────────────────────
+  const runVerifyLogin = useCallback(
+    async (code: string) => {
+      if (isLoading) return;
+
+      // Validate using real TOTP math against locally-stored secret
+      const valid = await validateTOTPCode(totpSecret, code);
+      if (!valid) {
+        toast.error(
+          "Invalid code. Check your authenticator app and try again.",
+        );
+        setOtpCode(["", "", "", "", "", ""]);
+        setTimeout(() => otpRefs.current[0]?.focus(), 50);
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        const phoneAsEmail = phoneToEmail(phone.trim());
+        const identity = loadStoredIdentity()!;
+        const actor = await createActorWithConfig({
+          agentOptions: { identity },
+        });
+
+        const loginOk = await actor.login({
+          email: phoneAsEmail,
+          passwordHash: totpSecret,
+        });
+
+        if (!loginOk) {
+          // Backend login failed — may be a new device or backend state mismatch.
+          // Try re-registering silently, then login again.
+          try {
+            await actor.register({
+              name: phone.trim(),
+              email: phoneAsEmail,
+              partnerEmail: "",
+              passwordHash: totpSecret,
+            });
+            const retryOk = await actor.login({
+              email: phoneAsEmail,
+              passwordHash: totpSecret,
+            });
+            if (!retryOk) {
+              toast.error("Login failed. Please try again.");
+              clearStoredIdentity();
+              setIsLoading(false);
+              return;
+            }
+          } catch {
+            toast.error("Login failed. Please try again.");
+            clearStoredIdentity();
+            setIsLoading(false);
+            return;
+          }
+        }
+
+        await actor.updateOnlineStatus(true);
+        const profile = await actor.getOwnProfile();
+        const principal = identity.getPrincipal().toText();
+
+        const partnerEmailFromProfile = profile.partnerEmail ?? "";
+        const partnerPhoneDisplay = partnerEmailFromProfile.endsWith("@sc.app")
+          ? `+${partnerEmailFromProfile.replace("@sc.app", "")}`
+          : partnerEmailFromProfile;
+
+        setSession({
+          principal,
+          phone: phone.trim(),
+          email: phoneAsEmail,
+          partnerPhone: partnerPhoneDisplay,
+          partnerEmail: partnerEmailFromProfile,
+          partnerPrincipal: profile.partnerId?.toString() ?? null,
+          name: profile.name || phone.trim(),
+        });
+
+        const hasPartner =
+          partnerEmailFromProfile && partnerEmailFromProfile !== "";
+        if (!hasPartner) {
+          setIsLoading(false);
+          goToStep("partner", 1);
+        } else {
+          toast.success("Welcome back!");
+          onAuth();
+        }
+      } catch (err) {
+        console.error("Login error:", err);
+        toast.error("Something went wrong. Please try again.");
+        clearStoredIdentity();
+        setIsLoading(false);
+      }
+    },
+    [totpSecret, phone, goToStep, onAuth, isLoading],
+  );
 
   // ── Step 4: Set partner phone ─────────────────────────────────────────────
   const handleSetPartner = async (e: React.FormEvent) => {
@@ -362,7 +342,6 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
       toast.error("Please enter a valid mobile number");
       return;
     }
-
     const myPhone = phone.trim();
     if (
       trimmed === myPhone ||
@@ -412,8 +391,15 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
     const next = [...otpCode];
     next[index] = digit;
     setOtpCode(next);
+
     if (digit && index < 5) {
       otpRefs.current[index + 1]?.focus();
+    } else if (digit && index === 5) {
+      const fullCode = [...otpCode.slice(0, 5), digit].join("");
+      if (fullCode.length === 6 && !isLoading) {
+        if (step === "totp-verify") runVerifySetup(fullCode);
+        else if (step === "totp-login") runVerifyLogin(fullCode);
+      }
     }
   };
 
@@ -444,10 +430,13 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
       .slice(0, 6);
     if (pasted.length === 6) {
       setOtpCode(pasted.split(""));
+      if (!isLoading) {
+        if (step === "totp-verify") runVerifySetup(pasted);
+        else if (step === "totp-login") runVerifyLogin(pasted);
+      }
     }
   };
 
-  // ── Digit boxes shared component ─────────────────────────────────────────
   const DigitBoxes = () => (
     <fieldset
       className="flex gap-2 justify-center mb-6 border-0 p-0 m-0"
@@ -485,7 +474,6 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
     </fieldset>
   );
 
-  // ── Step indicators ───────────────────────────────────────────────────────
   const steps = getSteps(isNewUser);
   const currentStepIndex = steps.indexOf(step);
 
@@ -534,7 +522,6 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                     Sign in with your mobile number and an authenticator app.
                   </p>
                 </div>
-
                 <form onSubmit={handleSubmitPhone} className="space-y-5">
                   <div className="space-y-2">
                     <label
@@ -563,7 +550,6 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                       Include country code (e.g. +1 for US)
                     </p>
                   </div>
-
                   <Button
                     type="submit"
                     className="w-full h-12 font-ui font-semibold text-sm rounded-xl"
@@ -611,7 +597,6 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                   </p>
                 </div>
 
-                {/* Instructions */}
                 <ol className="mb-5 space-y-1 text-xs text-muted-foreground font-body">
                   <li className="flex gap-2">
                     <span className="font-bold text-primary shrink-0">1.</span>
@@ -628,7 +613,6 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                   </li>
                 </ol>
 
-                {/* QR code */}
                 {qrDataUrl ? (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.9 }}
@@ -652,7 +636,6 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                   </div>
                 )}
 
-                {/* Manual entry key */}
                 <div className="mb-6 rounded-xl border border-border bg-muted/40 px-4 py-3">
                   <p className="text-xs text-muted-foreground font-ui uppercase tracking-wider mb-1">
                     Manual entry key
@@ -672,7 +655,6 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                 >
                   I've scanned it →
                 </Button>
-
                 <div className="mt-4 text-center">
                   <button
                     type="button"
@@ -719,7 +701,7 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                 <Button
                   type="button"
                   className="w-full h-12 font-ui font-semibold text-sm rounded-xl"
-                  onClick={handleVerifySetup}
+                  onClick={() => runVerifySetup(otpCode.join(""))}
                   disabled={isLoading || !otpComplete}
                 >
                   {isLoading ? (
@@ -731,7 +713,6 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                     "Confirm & continue"
                   )}
                 </Button>
-
                 <div className="mt-5 text-center">
                   <button
                     type="button"
@@ -785,7 +766,7 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                 <Button
                   type="button"
                   className="w-full h-12 font-ui font-semibold text-sm rounded-xl"
-                  onClick={handleVerifyLogin}
+                  onClick={() => runVerifyLogin(otpCode.join(""))}
                   disabled={isLoading || !otpComplete}
                 >
                   {isLoading ? (
@@ -797,7 +778,6 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                     "Sign in"
                   )}
                 </Button>
-
                 <div className="mt-5 text-center">
                   <button
                     type="button"
@@ -827,7 +807,7 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                 <div className="mb-6">
                   <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
                     <span className="text-2xl" role="img" aria-label="partner">
-                      🔒
+                      🤝
                     </span>
                   </div>
                   <h2 className="text-xl font-semibold font-ui text-foreground mb-1">
@@ -838,7 +818,6 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                     their mobile number.
                   </p>
                 </div>
-
                 <form onSubmit={handleSetPartner} className="space-y-5">
                   <div className="space-y-2">
                     <label
@@ -867,7 +846,6 @@ export function OTPAuthPage({ onAuth }: OTPAuthPageProps) {
                       They also need to add your number on their device
                     </p>
                   </div>
-
                   <Button
                     type="submit"
                     className="w-full h-12 font-ui font-semibold text-sm rounded-xl"

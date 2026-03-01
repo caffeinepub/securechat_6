@@ -95,6 +95,31 @@ export async function validateTOTPCode(
 }
 
 /**
+ * Generate a cryptographically random TOTP secret (20 bytes, base32-encoded).
+ * This runs entirely in the browser -- no backend call needed.
+ */
+export function generateTOTPSecretLocally(): string {
+  const bytes = new Uint8Array(20);
+  crypto.getRandomValues(bytes);
+  let result = "";
+  // Encode 5 bits at a time (base32)
+  let buffer = 0;
+  let bitsLeft = 0;
+  for (const byte of bytes) {
+    buffer = (buffer << 8) | byte;
+    bitsLeft += 8;
+    while (bitsLeft >= 5) {
+      bitsLeft -= 5;
+      result += BASE32_CHARS[(buffer >> bitsLeft) & 0x1f];
+    }
+  }
+  if (bitsLeft > 0) {
+    result += BASE32_CHARS[(buffer << (5 - bitsLeft)) & 0x1f];
+  }
+  return result;
+}
+
+/**
  * Build an otpauth:// URI for QR code generation.
  */
 export function buildOTPAuthURI(
